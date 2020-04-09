@@ -98,17 +98,17 @@ public class TypeRenderUtils {
     }
 
     public static Element drawField(Class<?> clazz, Integer expand) {
-        TableElement fieldsTable = new TableElement().leftCellPadding(0).rightCellPadding(0);
+        TableElement fieldsTable = new TableElement(1).leftCellPadding(0).rightCellPadding(0);
         Field[] fields = clazz.getDeclaredFields();
         if (fields == null || fields.length == 0) {
             return fieldsTable;
         }
 
         for (Field field : fields) {
-            TableElement fieldTable = new TableElement().leftCellPadding(0).rightCellPadding(0);
-            fieldTable.row("modifier", StringUtils.modifier(field.getModifiers(), ','))
+            TableElement fieldTable = new TableElement().leftCellPadding(0).rightCellPadding(1);
+            fieldTable.row("name", field.getName())
                     .row("type", StringUtils.classname(field.getType()))
-                    .row("name", field.getName());
+                    .row("modifier", StringUtils.modifier(field.getModifiers(), ','));
 
             Annotation[] annotations = field.getAnnotations();
             if (annotations != null && annotations.length > 0) {
@@ -160,6 +160,6 @@ public class TypeRenderUtils {
                 types.add(annotation.annotationType());
             }
         }
-        return StringUtils.concat(",", types.toArray(new Class<?>[types.size()]));
+        return StringUtils.concat(",", types.toArray(new Class<?>[0]));
     }
 }

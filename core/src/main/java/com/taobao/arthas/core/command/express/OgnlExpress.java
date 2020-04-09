@@ -1,10 +1,11 @@
 package com.taobao.arthas.core.command.express;
 
-import com.taobao.arthas.core.util.LogUtil;
-import com.taobao.middleware.logger.Logger;
+import com.alibaba.arthas.deps.org.slf4j.Logger;
+import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 
 import ognl.ClassResolver;
 import ognl.DefaultMemberAccess;
+import ognl.MemberAccess;
 import ognl.Ognl;
 import ognl.OgnlContext;
 
@@ -13,8 +14,8 @@ import ognl.OgnlContext;
  * @author hengyunabc 2018-10-18
  */
 public class OgnlExpress implements Express {
-
-    Logger logger = LogUtil.getArthasLogger();
+    private static final MemberAccess MEMBER_ACCESS = new DefaultMemberAccess(true);
+    private static final Logger logger = LoggerFactory.getLogger(OgnlExpress.class);
 
     private Object bindObject;
     private final OgnlContext context;
@@ -27,7 +28,7 @@ public class OgnlExpress implements Express {
         context = new OgnlContext();
         context.setClassResolver(classResolver);
         // allow private field access
-        context.setMemberAccess(new DefaultMemberAccess(true));
+        context.setMemberAccess(MEMBER_ACCESS);
     }
 
     @Override
@@ -35,7 +36,7 @@ public class OgnlExpress implements Express {
         try {
             return Ognl.getValue(express, context, bindObject);
         } catch (Exception e) {
-            logger.error(null, "Error during evaluating the expression:", e);
+            logger.error("Error during evaluating the expression:", e);
             throw new ExpressException(express, e);
         }
     }
@@ -62,6 +63,8 @@ public class OgnlExpress implements Express {
     public Express reset() {
         context.clear();
         context.setClassResolver(CustomClassResolver.customClassResolver);
+        // allow private field access
+        context.setMemberAccess(MEMBER_ACCESS);
         return this;
     }
 }

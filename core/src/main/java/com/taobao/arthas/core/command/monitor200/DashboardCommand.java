@@ -1,13 +1,15 @@
 package com.taobao.arthas.core.command.monitor200;
 
+import com.alibaba.arthas.deps.org.slf4j.Logger;
+import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.taobao.arthas.core.command.Constants;
 import com.taobao.arthas.core.shell.command.AnnotatedCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.shell.handlers.Handler;
+import com.taobao.arthas.core.shell.handlers.shell.QExitHandler;
 import com.taobao.arthas.core.shell.session.Session;
-import com.taobao.arthas.core.util.LogUtil;
 import com.taobao.arthas.core.util.NetUtils;
 import com.taobao.arthas.core.util.NetUtils.Response;
 import com.taobao.arthas.core.util.ThreadUtil;
@@ -16,7 +18,6 @@ import com.taobao.middleware.cli.annotations.Description;
 import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
-import com.taobao.middleware.logger.Logger;
 import com.taobao.text.Color;
 import com.taobao.text.Decoration;
 import com.taobao.text.Style;
@@ -48,7 +49,7 @@ import java.util.TimerTask;
         Constants.WIKI + Constants.WIKI_HOME + "dashboard")
 public class DashboardCommand extends AnnotatedCommand {
 
-    private static final Logger logger = LogUtil.getArthasLogger();
+    private static final Logger logger = LoggerFactory.getLogger(DashboardCommand.class);
 
     private SumRateCounter tomcatRequestCounter = new SumRateCounter();
     private SumRateCounter tomcatErrorCounter = new SumRateCounter();
@@ -57,24 +58,15 @@ public class DashboardCommand extends AnnotatedCommand {
 
     private int numOfExecutions = Integer.MAX_VALUE;
 
-    private boolean batchMode;
-
     private long interval = 5000;
 
     private volatile long count = 0;
     private volatile Timer timer;
-    private Boolean running = false;
 
     @Option(shortName = "n", longName = "number-of-execution")
     @Description("The number of times this command will be executed.")
     public void setNumOfExecutions(int numOfExecutions) {
         this.numOfExecutions = numOfExecutions;
-    }
-
-    @Option(shortName = "b", longName = "batch")
-    @Description("Execute this command in batch mode.")
-    public void setBatchMode(boolean batchMode) {
-        this.batchMode = batchMode;
     }
 
     @Option(shortName = "i", longName = "interval")
@@ -113,9 +105,11 @@ public class DashboardCommand extends AnnotatedCommand {
         process.resumeHandler(restartHandler);
         process.endHandler(stopHandler);
 
+        // q exit support
+        process.stdinHandler(new QExitHandler(process));
+
         // start the timer
         timer.scheduleAtFixedRate(new DashboardTimerTask(process), 0, getInterval());
-        running = true;
     }
 
     public synchronized void stop() {
@@ -136,10 +130,6 @@ public class DashboardCommand extends AnnotatedCommand {
 
     public int getNumOfExecutions() {
         return numOfExecutions;
-    }
-
-    public boolean isBatchMode() {
-        return batchMode;
     }
 
     public long getInterval() {
@@ -293,8 +283,8 @@ public class DashboardCommand extends AnnotatedCommand {
         return RenderUtil.render(table, width, height);
     }
 
-    String drawRuntineInfoAndTomcatInfo(int width, int height) {
-        TableElement table = new TableElement(1, 1);
+    String drawRuntimeInfoAndTomcatInfo(int width, int height) {
+        TableElement resultTable = new TableElement(1, 1);
 
         TableElement runtimeInfoTable = new TableElement(1, 1).rightCellPadding(1);
         runtimeInfoTable
@@ -302,21 +292,27 @@ public class DashboardCommand extends AnnotatedCommand {
 
         addRuntimeInfo(runtimeInfoTable);
 
-        TableElement tomcatInfoTable = new TableElement(1, 1).rightCellPadding(1);
+        TableElement tomcatInfoTable = null;
 
         try {
             // 如果请求tomcat信息失败，则不显示tomcat信息
             if (NetUtils.request("http://localhost:8006").isSuccess()) {
+                tomcatInfoTable = new TableElement(1, 1).rightCellPadding(1);
                 tomcatInfoTable
                         .add(new RowElement().style(Decoration.bold.fg(Color.black).bg(Color.white)).add("Tomcat", ""));
                 addTomcatInfo(tomcatInfoTable);
             }
         } catch (Throwable t) {
-            logger.error(null, "get Tomcat Info error!", t);
+            logger.error("get Tomcat Info error!", t);
         }
 
-        table.row(runtimeInfoTable, tomcatInfoTable);
-        return RenderUtil.render(table, width, height);
+        if (tomcatInfoTable != null) {
+            resultTable.row(runtimeInfoTable, tomcatInfoTable);
+        } else {
+            resultTable = runtimeInfoTable;
+        }
+
+        return RenderUtil.render(resultTable, width, height);
     }
 
     static class MemoryEntry {
@@ -403,7 +399,7 @@ public class DashboardCommand extends AnnotatedCommand {
 
             String threadInfo = drawThreadInfo(width, threadTopHeight);
             String memoryAndGc = drawMemoryInfoAndGcInfo(width, runtimeInfoHeight);
-            String runTimeAndTomcat = drawRuntineInfoAndTomcatInfo(width, heapInfoHeight);
+            String runTimeAndTomcat = drawRuntimeInfoAndTomcatInfo(width, heapInfoHeight);
 
             process.write(threadInfo + memoryAndGc + runTimeAndTomcat);
 

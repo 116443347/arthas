@@ -24,11 +24,10 @@ Pls. refer to [core parameters in expression](advice-class.md) for more details.
 * Pls. also refer to [https://github.com/alibaba/arthas/issues/71](https://github.com/alibaba/arthas/issues/71) for more advanced usage
 * OGNL official site: [https://commons.apache.org/proper/commons-ognl/language-guide.html](https://commons.apache.org/proper/commons-ognl/language-guide.html)
 
-Many times what we are interested is the exact trace result when the method call takes time over one particular period. It is possible to achieve this in Arthas, for example: `trace *StringUtils isBlank '$cost>100'` means trace result will only be output when the executing time exceeds 100ms.
+Many times what we are interested is the exact trace result when the method call takes time over one particular period. It is possible to achieve this in Arthas, for example: `trace *StringUtils isBlank '#cost>100'` means trace result will only be output when the executing time exceeds 100ms.
 
-> Notes:
-> 1. `watch`/`stack`/`trace`, these three commands all support `$cost`.
-> 2. On version `3.0`, pls. use `#cost` instead of `$cost`.
+
+> `watch`/`stack`/`trace`, these three commands all support `#cost`.
 
 ### Notice
 
@@ -36,77 +35,102 @@ Many times what we are interested is the exact trace result when the method call
 
 ### Usage
 
-Sample code:
+#### Start Demo
 
-```java
-    public static void main(String[] args) {
-        List<String> list = new ArrayList<String>();
-        list.add("a");
-        list.add("b");
+Start `arthas-demo` in [Quick Start](quick-start.md).
 
-        List<String> list2 = new ArrayList<String>();
-        list2.add("c");
-        list2.add("d");
+#### trace method
 
-        int len = add(list, list2);
-    }
+```bash
+$ trace demo.MathGame run
+Press Q or Ctrl+C to abort.
+Affect(class-cnt:1 , method-cnt:1) cost in 28 ms.
+`---ts=2019-12-04 00:45:08;thread_name=main;id=1;is_daemon=false;priority=5;TCCL=sun.misc.Launcher$AppClassLoader@3d4eac69
+    `---[0.617465ms] demo.MathGame:run()
+        `---[0.078946ms] demo.MathGame:primeFactors() #24 [throws Exception]
 
-    private static int add(List<String> list, List<String> list2) {
-        int i = 10;
-        while (i >= 0) {
-            try {
-                hehe(i);
-            } catch (Throwable t) {
-                t.printStackTrace();
-            }
-            i--;
-        }
-
-        list.addAll(list2);
-        return list.size();
-    }
-
-    private static void hehe(int i) {
-        if (i == 0) {
-            throw new RuntimeException("ZERO");
-        }
-    }
+`---ts=2019-12-04 00:45:09;thread_name=main;id=1;is_daemon=false;priority=5;TCCL=sun.misc.Launcher$AppClassLoader@3d4eac69
+    `---[1.276874ms] demo.MathGame:run()
+        `---[0.03752ms] demo.MathGame:primeFactors() #24 [throws Exception]
 ```
 
-Trace down method `add`:
 
-```shell
-$ trace com.alibaba.sample.petstore.web.store.module.screen.ItemList add params.length==2
+#### trace times limit
+
+If the method invoked many times, use `-n` options to specify trace times. For example, the command will exit when received a trace result.
+
+```bash
+$ trace demo.MathGame run -n 1
+Press Q or Ctrl+C to abort.
+Affect(class-cnt:1 , method-cnt:1) cost in 20 ms.
+`---ts=2019-12-04 00:45:53;thread_name=main;id=1;is_daemon=false;priority=5;TCCL=sun.misc.Launcher$AppClassLoader@3d4eac69
+    `---[0.549379ms] demo.MathGame:run()
+        +---[0.059839ms] demo.MathGame:primeFactors() #24
+        `---[0.232887ms] demo.MathGame:print() #25
+
+Command execution times exceed limit: 1, so command will exit. You can set it with -n option.
+```
+
+#### Include jdk method
+
+* `--skipJDKMethod <value> `   skip jdk method trace, default value true.
+
+```bash
+$ trace --skipJDKMethod false demo.MathGame run
+Press Q or Ctrl+C to abort.
+Affect(class-cnt:1 , method-cnt:1) cost in 60 ms.
+`---ts=2019-12-04 00:44:41;thread_name=main;id=1;is_daemon=false;priority=5;TCCL=sun.misc.Launcher$AppClassLoader@3d4eac69
+    `---[1.357742ms] demo.MathGame:run()
+        +---[0.028624ms] java.util.Random:nextInt() #23
+        +---[0.045534ms] demo.MathGame:primeFactors() #24 [throws Exception]
+        +---[0.005372ms] java.lang.StringBuilder:<init>() #28
+        +---[0.012257ms] java.lang.Integer:valueOf() #28
+        +---[0.234537ms] java.lang.String:format() #28
+        +---[min=0.004539ms,max=0.005778ms,total=0.010317ms,count=2] java.lang.StringBuilder:append() #28
+        +---[0.013777ms] java.lang.Exception:getMessage() #28
+        +---[0.004935ms] java.lang.StringBuilder:toString() #28
+        `---[0.06941ms] java.io.PrintStream:println() #28
+
+`---ts=2019-12-04 00:44:42;thread_name=main;id=1;is_daemon=false;priority=5;TCCL=sun.misc.Launcher$AppClassLoader@3d4eac69
+    `---[3.030432ms] demo.MathGame:run()
+        +---[0.010473ms] java.util.Random:nextInt() #23
+        +---[0.023715ms] demo.MathGame:primeFactors() #24 [throws Exception]
+        +---[0.005198ms] java.lang.StringBuilder:<init>() #28
+        +---[0.006405ms] java.lang.Integer:valueOf() #28
+        +---[0.178583ms] java.lang.String:format() #28
+        +---[min=0.011636ms,max=0.838077ms,total=0.849713ms,count=2] java.lang.StringBuilder:append() #28
+        +---[0.008747ms] java.lang.Exception:getMessage() #28
+        +---[0.019768ms] java.lang.StringBuilder:toString() #28
+        `---[0.076457ms] java.io.PrintStream:println() #28
+```
+
+#### Filtering by cost
+
+```bash
+$ trace demo.MathGame run '#cost > 10'
 Press Ctrl+C to abort.
-Affect(class-cnt:1 , method-cnt:1) cost in 144 ms.
-`---Tracing...
-    `---[2ms]com.alibaba.sample.petstore.web.store.module.screen.ItemList:add()
-        +---[0,0,0ms,11]com.alibaba.sample.petstore.web.store.module.screen.ItemList:hehe() [throws Exception]
-        +---[1ms]java.lang.Throwable:printStackTrace()
-        +---[0ms]java.util.List:addAll()
-        `---[0ms]java.util.List:size()
+Affect(class-cnt:1 , method-cnt:1) cost in 41 ms.
+`---ts=2018-12-04 01:12:02;thread_name=main;id=1;is_daemon=false;priority=5;TCCL=sun.misc.Launcher$AppClassLoader@3d4eac69
+    `---[12.033735ms] demo.MathGame:run()
+        +---[0.006783ms] java.util.Random:nextInt()
+        +---[11.852594ms] demo.MathGame:primeFactors()
+        `---[0.05447ms] demo.MathGame:print()
 ```
 
-Filter by time cost:
-
-```shell
-$ trace com.alibaba.sample.petstore.web.store.module.screen.ItemList execute #cost>4
-Press Ctrl+C to abort.
-Affect(class-cnt:1 , method-cnt:1) cost in 159 ms.
-trace com.alibaba.sample.petstore.web.store.module.screen.ItemList execute #cost>4
-`---thread_name=http-nio-8080-exec-5;id=2c;is_daemon=true;priority=5;TCCL=com.taobao.pandora.boot.embedded.tomcat.TomcatEmbeddedWebappClassLoader
-    `---[8.866586ms] com.alibaba.sample.petstore.web.store.module.screen.ItemList:execute()
-        +---[2.847106ms] com.alibaba.sample.petstore.biz.StoreManager:getAllProductItems()
-        +---[0.765544ms] com.alibaba.sample.petstore.dal.dao.ProductDao:getProductById()
-        +---[0.021204ms] com.alibaba.sample.petstore.dal.dataobject.Product:getCategoryId()
-        +---[1.341532ms] com.alibaba.sample.petstore.dal.dao.CategoryDao:getCategoryById()
-        `---[min=0.005428ms,max=0.094064ms,total=0.105228ms,count=3] com.alibaba.citrus.turbine.Context:put()
-```
-
-> Only the call path which's time cost is higher than `4ms` will be shown. This feature is handy to focus on what's needed to focus when troubleshoot.
+> Only the call path which's time cost is higher than `10ms` will be shown. This feature is handy to focus on what's needed to focus when troubleshoot.
 
 * Here Arthas provides the similar functionality JProfile and other commercial software provide. Compared to these professional softwares, Arthas doesn't deduce the time cost `trace` itself takes, therefore it is not as accurate as these softwares offer. More classes and methods on the calling path, more inaccurate `trace` output is, but it is still helpful for diagnostics where the bottleneck is.
-* "[2.847106ms] com.alibaba.sample.petstore.biz.StoreManager:getAllProductItems()" means "getAllProductItem()" method from "com.alibaba.sample.petstore.biz.StoreManager" takes `2.847106` ms.
-* "[min=0.005428ms,max=0.094064ms,total=0.105228ms,count=3] com.alibaba.citrus.turbine.Context:put()" means aggregating all same method calls into one single line. The minimum time cost is `0.005428` ms, the maximum time cost is `0.094064` ms, and the total time cost for all method calls (`3` times in total) to "com.alibaba.citrus.turbine.Context:put()" is `0.105228ms`. If "throws Exception" appears in this line, it means some exceptions have been thrown from this method calls.
+* "[12.033735ms]" means the method on the node takes `12.033735` ms.
+* "[min=0.005428ms,max=0.094064ms,total=0.105228ms,count=3] demo:call()" means aggregating all same method calls into one single line. The minimum time cost is `0.005428` ms, the maximum time cost is `0.094064` ms, and the total time cost for all method calls (`3` times in total) to "demo:call()" is `0.105228ms`. If "throws Exception" appears in this line, it means some exceptions have been thrown from this method calls.
 * The total time cost may not equal to the sum of the time costs each sub method call takes, this is because Arthas instrumented code takes time too.
 
+
+#### trace multiple classes or multiple methods
+
+The trace command will only trace the subcalls in the method to the trace, and will not trace down multiple layers. Because traces are expensive, multi-layer traces can lead to a lot of classes and methods that ultimately have to be traced.
+
+You can use the regular expression to match multiple classes and methods on the path to achieve a multi-layer trace effect to some extent.
+
+```bash
+Trace -E com.test.ClassA|org.test.ClassB method1|method2|method3
+```

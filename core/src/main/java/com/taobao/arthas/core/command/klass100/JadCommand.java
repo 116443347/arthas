@@ -1,12 +1,14 @@
 package com.taobao.arthas.core.command.klass100;
 
-import com.taobao.arthas.core.advisor.Enhancer;
+import com.alibaba.arthas.deps.org.slf4j.Logger;
+import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 import com.taobao.arthas.core.command.Constants;
+import com.taobao.arthas.core.shell.cli.Completion;
+import com.taobao.arthas.core.shell.cli.CompletionUtils;
 import com.taobao.arthas.core.shell.command.AnnotatedCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
 import com.taobao.arthas.core.util.ClassUtils;
 import com.taobao.arthas.core.util.Decompiler;
-import com.taobao.arthas.core.util.LogUtil;
 import com.taobao.arthas.core.util.SearchUtils;
 import com.taobao.arthas.core.util.TypeRenderUtils;
 import com.taobao.arthas.core.util.affect.RowAffect;
@@ -15,7 +17,6 @@ import com.taobao.middleware.cli.annotations.Description;
 import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
-import com.taobao.middleware.logger.Logger;
 import com.taobao.text.Color;
 import com.taobao.text.Decoration;
 import com.taobao.text.lang.LangRenderUtil;
@@ -25,8 +26,11 @@ import com.taobao.text.ui.TableElement;
 import com.taobao.text.util.RenderUtil;
 
 import java.io.File;
+import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
-import java.util.*;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import static com.taobao.text.ui.Element.label;
@@ -38,18 +42,25 @@ import static com.taobao.text.ui.Element.label;
 @Name("jad")
 @Summary("Decompile class")
 @Description(Constants.EXAMPLE +
-        "  jad -c 39eb305e org.apache.log4j.Logger\n" +
+        "  jad java.lang.String\n" +
+        "  jad java.lang.String toString\n" +
+        "  jad --source-only java.lang.String\n" +
         "  jad -c 39eb305e org/apache/log4j/Logger\n" +
         "  jad -c 39eb305e -E org\\\\.apache\\\\.*\\\\.StringUtils\n" +
         Constants.WIKI + Constants.WIKI_HOME + "jad")
 public class JadCommand extends AnnotatedCommand {
-    private static final Logger logger = LogUtil.getArthasLogger();
+    private static final Logger logger = LoggerFactory.getLogger(JadCommand.class);
     private static Pattern pattern = Pattern.compile("(?m)^/\\*\\s*\\*/\\s*$" + System.getProperty("line.separator"));
 
     private String classPattern;
     private String methodName;
     private String code = null;
     private boolean isRegEx = false;
+
+    /**
+     * jad output source code only
+     */
+    private boolean sourceOnly = false;
 
     @Argument(argName = "class-pattern", index = 0)
     @Description("Class name pattern, use either '.' or '/' as separator")
@@ -76,6 +87,12 @@ public class JadCommand extends AnnotatedCommand {
         isRegEx = regEx;
     }
 
+    @Option(longName = "source-only", flag = true)
+    @Description("Output source code only")
+    public void setSourceOnly(boolean sourceOnly) {
+        this.sourceOnly = sourceOnly;
+    }
+
     @Override
     public void process(CommandProcess process) {
         RowAffect affect = new RowAffect();
@@ -96,8 +113,31 @@ public class JadCommand extends AnnotatedCommand {
                 processExactMatch(process, affect, inst, matchedClasses, withInnerClasses);
             }
         } finally {
-            process.write(affect + "\n");
+            if (!this.sourceOnly) {
+                process.write(affect + "\n");
+            }
             process.end();
+        }
+    }
+
+
+    public static void retransformClasses(Instrumentation inst, ClassFileTransformer transformer, Set<Class<?>> classes) {
+        try {
+            inst.addTransformer(transformer, true);
+
+            for(Class<?> clazz : classes) {
+                try{
+                    inst.retransformClasses(clazz);
+                }catch(Throwable e) {
+                    String errorMsg = "retransformClasses class error, name: " + clazz.getName();
+                    if(ClassUtils.isLambdaClass(clazz) && e instanceof VerifyError) {
+                        errorMsg += ", Please ignore lambda class VerifyError: https://github.com/alibaba/arthas/issues/675";
+                    }
+                    logger.error(errorMsg, e);
+                }
+            }
+        } finally {
+            inst.removeTransformer(transformer);
         }
     }
 
@@ -108,7 +148,8 @@ public class JadCommand extends AnnotatedCommand {
 
         try {
             ClassDumpTransformer transformer = new ClassDumpTransformer(allClasses);
-            Enhancer.enhance(inst, transformer, allClasses);
+            retransformClasses(inst, transformer, allClasses);
+
             Map<Class<?>, File> classFiles = transformer.getDumpResult();
             File classFile = classFiles.get(c);
 
@@ -117,6 +158,11 @@ public class JadCommand extends AnnotatedCommand {
                 source = pattern.matcher(source).replaceAll("");
             } else {
                 source = "unknown";
+            }
+
+            if (this.sourceOnly) {
+                process.write(LangRenderUtil.render(source) + "\n");
+                return;
             }
 
 
@@ -130,7 +176,7 @@ public class JadCommand extends AnnotatedCommand {
             process.write(com.taobao.arthas.core.util.Constants.EMPTY_STRING);
             affect.rCnt(classFiles.keySet().size());
         } catch (Throwable t) {
-            logger.error(null, "jad: fail to decompile class: " + c.getName(), t);
+            logger.error("jad: fail to decompile class: " + c.getName(), t);
         }
     }
 
@@ -156,4 +202,22 @@ public class JadCommand extends AnnotatedCommand {
         process.write("No class found for: " + classPattern + "\n");
     }
 
+    @Override
+    public void complete(Completion completion) {
+        int argumentIndex = CompletionUtils.detectArgumentIndex(completion);
+
+        if (argumentIndex == 1) {
+            if (!CompletionUtils.completeClassName(completion)) {
+                super.complete(completion);
+            }
+            return;
+        } else if (argumentIndex == 2) {
+            if (!CompletionUtils.completeMethodName(completion)) {
+                super.complete(completion);
+            }
+            return;
+        }
+
+        super.complete(completion);
+    }
 }

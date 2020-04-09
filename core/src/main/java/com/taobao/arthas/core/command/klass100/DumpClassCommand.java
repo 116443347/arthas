@@ -1,23 +1,25 @@
 package com.taobao.arthas.core.command.klass100;
 
+import com.alibaba.arthas.deps.org.slf4j.Logger;
+import com.alibaba.arthas.deps.org.slf4j.LoggerFactory;
 import com.taobao.arthas.core.advisor.Enhancer;
 import com.taobao.arthas.core.command.Constants;
+import com.taobao.arthas.core.shell.cli.Completion;
+import com.taobao.arthas.core.shell.cli.CompletionUtils;
 import com.taobao.arthas.core.shell.command.AnnotatedCommand;
 import com.taobao.arthas.core.shell.command.CommandProcess;
-import com.taobao.arthas.core.util.LogUtil;
 import com.taobao.arthas.core.util.SearchUtils;
 import com.taobao.arthas.core.util.StringUtils;
 import com.taobao.arthas.core.util.TypeRenderUtils;
 import com.taobao.arthas.core.util.affect.RowAffect;
 import com.taobao.middleware.cli.annotations.Argument;
+import com.taobao.middleware.cli.annotations.DefaultValue;
 import com.taobao.middleware.cli.annotations.Description;
 import com.taobao.middleware.cli.annotations.Name;
 import com.taobao.middleware.cli.annotations.Option;
 import com.taobao.middleware.cli.annotations.Summary;
-import com.taobao.middleware.logger.Logger;
 import com.taobao.text.Color;
 import com.taobao.text.Decoration;
-import com.taobao.text.ui.Element;
 import com.taobao.text.ui.LabelElement;
 import com.taobao.text.ui.TableElement;
 import com.taobao.text.util.RenderUtil;
@@ -36,17 +38,22 @@ import static com.taobao.text.ui.Element.label;
 @Name("dump")
 @Summary("Dump class byte array from JVM")
 @Description(Constants.EXAMPLE +
-        "  dump -E org\\\\.apache\\\\.commons\\\\.lang\\\\.StringUtils\n" +
-        "  dump org.apache.commons.lang.StringUtils\n" +
+        "  dump java.lang.String\n" +
+        "  dump -d /tmp/output java.lang.String\n" +
         "  dump org/apache/commons/lang/StringUtils\n" +
         "  dump *StringUtils\n" +
+        "  dump -E org\\\\.apache\\\\.commons\\\\.lang\\\\.StringUtils\n" +
         Constants.WIKI + Constants.WIKI_HOME + "dump")
 public class DumpClassCommand extends AnnotatedCommand {
-    private static final Logger logger = LogUtil.getArthasLogger();
+    private static final Logger logger = LoggerFactory.getLogger(DumpClassCommand.class);
 
     private String classPattern;
     private String code = null;
     private boolean isRegEx = false;
+
+    private String directory;
+
+    private int limit;
 
     @Argument(index = 0, argName = "class-pattern")
     @Description("Class name pattern, use either '.' or '/' as separator")
@@ -60,22 +67,43 @@ public class DumpClassCommand extends AnnotatedCommand {
         this.code = code;
     }
 
-    @Option(shortName = "E", longName = "regex")
+    @Option(shortName = "E", longName = "regex", flag = true)
     @Description("Enable regular expression to match (wildcard matching by default)")
     public void setRegEx(boolean regEx) {
         isRegEx = regEx;
     }
 
+    @Option(shortName = "d", longName = "directory")
+    @Description("Sets the destination directory for class files")
+    public void setDirectory(String directory) {
+        this.directory = directory;
+    }
+
+    @Option(shortName = "l", longName = "limit")
+    @Description("The limit of dump classes size, default value is 5")
+    @DefaultValue("5")
+    public void setLimit(int limit) {
+        this.limit = limit;
+    }
+
     @Override
     public void process(CommandProcess process) {
         RowAffect effect = new RowAffect();
-        Instrumentation inst = process.session().getInstrumentation();
 
-        Set<Class<?>> matchedClasses = SearchUtils.searchClass(inst, classPattern, isRegEx, code);
         try {
+            if (directory != null) {
+                File dir = new File(directory);
+                if (dir.isFile()) {
+                    process.write(directory + " :is not a directory, please check it\n");
+                    return;
+                }
+            }
+            Instrumentation inst = process.session().getInstrumentation();
+            Set<Class<?>> matchedClasses = SearchUtils.searchClass(inst, classPattern, isRegEx, code);
+
             if (matchedClasses == null || matchedClasses.isEmpty()) {
                 processNoMatch(process);
-            } else if (matchedClasses.size() > 5) {
+            } else if (matchedClasses.size() > limit) {
                 processMatches(process, matchedClasses);
             } else {
                 processMatch(process, effect, inst, matchedClasses);
@@ -86,6 +114,12 @@ public class DumpClassCommand extends AnnotatedCommand {
         }
     }
 
+    @Override
+    public void complete(Completion completion) {
+        if (!CompletionUtils.completeClassName(completion)) {
+            super.complete(completion);
+        }
+    }
 
     private void processMatch(CommandProcess process, RowAffect effect, Instrumentation inst, Set<Class<?>> matchedClasses) {
         try {
@@ -107,14 +141,14 @@ public class DumpClassCommand extends AnnotatedCommand {
                     .write(com.taobao.arthas.core.util.Constants.EMPTY_STRING);
             effect.rCnt(classFiles.keySet().size());
         } catch (Throwable t) {
-            logger.error(null, "dump: fail to dump classes: " + matchedClasses, t);
+            logger.error("dump: fail to dump classes: " + matchedClasses, t);
         }
     }
 
     private void processMatches(CommandProcess process, Set<Class<?>> matchedClasses) {
-        Element usage = new LabelElement("dump -c hashcode " + classPattern).style(Decoration.bold.fg(Color.blue));
-        process.write("Found more than 5 class for: " + classPattern + ", Please use ");
-        process.write(RenderUtil.render(usage, process.width()));
+        process.write(String.format(
+                "Found more than %d class for: %s, Please Try to specify the classloader with the -c option, or try to use --limit option.\n",
+                limit, classPattern));
 
         TableElement table = new TableElement().leftCellPadding(1).rightCellPadding(1);
         table.row(new LabelElement("NAME").style(Decoration.bold.bold()),
@@ -134,7 +168,12 @@ public class DumpClassCommand extends AnnotatedCommand {
     }
 
     private Map<Class<?>, File> dump(Instrumentation inst, Set<Class<?>> classes) throws UnmodifiableClassException {
-        ClassDumpTransformer transformer = new ClassDumpTransformer(classes);
+        ClassDumpTransformer transformer = null;
+        if (directory != null) {
+            transformer = new ClassDumpTransformer(classes, new File(directory));
+        } else {
+            transformer = new ClassDumpTransformer(classes);
+        }
         Enhancer.enhance(inst, transformer, classes);
         return transformer.getDumpResult();
     }
